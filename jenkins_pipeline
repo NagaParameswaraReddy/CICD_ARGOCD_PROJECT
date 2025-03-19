@@ -1,0 +1,78 @@
+pipeline {
+    agent any
+    tools{
+        maven 'mavenn'
+    }
+
+    stages {
+        stage('GitHub Clone') {
+            steps {
+                git branch: 'main', url: 'https://github.com/NagaParameswaraReddy/Jenkins_CI-CD.git'
+                echo "codeCloning from GitHub"
+            }
+        }
+
+        stage('Maven Build') {
+            steps {
+                sh 'mvn clean install'
+                echo "Building artifact"
+            }
+        }
+        stage('Sonarqube Analysis') {
+            steps {
+                sh '''
+                mvn sonar:sonar \
+                    -Dsonar.host.url=http://54.221.61.181:9000 \
+                    -Dsonar.login=squ_988fdae562ae7f9e5046a50ea0d91480206b1699
+                '''
+                echo "code scanned by sonarqube"
+            }
+        }
+        stage('Docker Build'){
+            steps{
+                sh 'docker build -t nagaparameswarareddy/mydevops:${BUILD_NUMBER} -f Dockerfile .'
+                echo "Docker image built successfully"
+            }
+        }
+        stage('image scan by trivy'){
+            steps{
+                echo 'Docker Image scan'
+				sh "trivy image --format json --output results.json nagaparameswarareddy/mydevops:${BUILD_NUMBER}" 
+            }
+        }
+        stage('push to docker hub'){
+            steps{
+                script{
+                    // Use Dockerhub credentials to access Docker Hub
+                    withCredentials([string(credentialsId: 'dockerhub', variable: 'pass')]){
+                            sh 'docker login -u nagaparameswarareddy -p ${pass}'  
+                    }
+                    // Push the Docker image to Docker Hub
+                    sh 'docker push nagaparameswarareddy/mydevops:${BUILD_NUMBER}'
+                    echo 'Pushed to Docker Hub'
+                }
+            }
+        }
+        stage('update deployment file by argocd'){
+             environment{
+                GIT_REPO_NAME = "Jenkins_CI-CD"
+                GIT_USER_NAME = "NagaParameswaraReddy"
+             }
+             steps{
+                echo 'Update Deployment File'
+				withCredentials([string(credentialsId: 'githubtoken', variable: 'GITHUB_TOKEN')]) {
+    sh '''
+    git config user.email "snagaparameswarareddy@gmail.com"
+    git config user.name "NagaParameswaraReddy"
+    BUILD_NUMBER=${BUILD_NUMBER}
+    sed -i "s/mydevops:.*/mydevops:${BUILD_NUMBER}/g" deploymentfiles/deployment.yml
+    git add .
+    git commit -m "Update deployment image to version ${BUILD_NUMBER}"
+    git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} HEAD:main
+    '''
+}
+
+             }
+        }
+    }
+}
